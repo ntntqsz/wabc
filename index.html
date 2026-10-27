@@ -1,0 +1,392 @@
+<!-- ... existing code ... -->
+    <!-- Alpine.js CDN -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Noto Sans TC', sans-serif; }
+        [x-cloak] { display: none !important; }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col justify-between selection:bg-purple-500 selection:text-white" x-data="checkInApp()" x-init="init()">
+
+    <!-- Header -->
+    <header class="bg-slate-800/90 border-b border-slate-700/60 sticky top-0 z-30 backdrop-blur-md">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <span class="text-3xl">🔮</span>
+                <div>
+                    <h1 class="text-lg font-bold text-slate-100 tracking-wide flex items-center gap-2">
+                        活動報到系統 <span class="text-xs px-2 py-0.5 rounded bg-purple-900/60 text-purple-300 border border-purple-500/30">W Edition</span>
+                    </h1>
+                    <p class="text-xs text-slate-400">© 2020 TonyStudio (TONY 楊文澤顧問). All rights reserved.</p>
+                </div>
+            </div>
+            
+            <div class="flex items-center space-x-2">
+                <!-- Sync Status Indicator -->
+                <div class="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-slate-900/80 border border-slate-700 text-xs">
+                    <span class="w-2 h-2 rounded-full" :class="isFirebaseConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-500'"></span>
+                    <span class="text-slate-300" x-text="isFirebaseConnected ? '雲端同步中' : '連線中...'"></span>
+                </div>
+                <button @click="openImportExport()" class="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm font-medium transition shadow-sm">
+                    <span>📁</span>
+                    <span class="hidden sm:inline">匯入/匯出</span>
+                </button>
+                <button @click="openSettings()" class="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-sm font-medium transition shadow-sm shadow-purple-900/30">
+                    <span>⚙️</span>
+                    <span class="hidden sm:inline">API 設定</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+<!-- ... existing code ... -->
+    <!-- Firebase SDK Integration -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, doc, setDoc, onSnapshot, updateDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyC7G6KF0CMq93Mp2JB7aF-q6rVVlN9Jf20",
+            authDomain: "wabc-c02bc.firebaseapp.com",
+            projectId: "wabc-c02bc",
+            storageBucket: "wabc-c02bc.firebasestorage.app",
+            messagingSenderId: "278333992534",
+            appId: "1:278333992534:web:66156ecc2ce6d54ebcd5f7",
+            measurementId: "G-ZBL1VGG394"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // Expose Firebase tools to window scope for Alpine.js store access
+        window.FB = {
+            auth,
+            db,
+            collection,
+            doc,
+            setDoc,
+            updateDoc,
+            deleteDoc,
+            onSnapshot,
+            signInAnonymously,
+            signInWithCustomToken
+        };
+    </script>
+
+    <!-- JavaScript Application Logic -->
+    <script>
+        const DEFAULT_ATTENDEES = [
+            { id: "ATT-001", name: "王小明", phone: "0912345789", email: "ming@example.com", ticketType: "VIP", notes: "前排預留席", isCheckedIn: true, checkInTime: "09:12:05" },
+            { id: "ATT-002", name: "林美華", phone: "0933123123", email: "meihua@example.com", ticketType: "一般", notes: "", isCheckedIn: false, checkInTime: "" },
+            { id: "ATT-003", name: "陳冠宇", phone: "0955888999", email: "kuanyu@example.com", ticketType: "講者", notes: "下午場專題主講", isCheckedIn: false, checkInTime: "" },
+            { id: "ATT-004", name: "張雅婷", phone: "0922444555", email: "yating@example.com", ticketType: "VIP", notes: "贊助商代表", isCheckedIn: true, checkInTime: "09:15:22" },
+            { id: "ATT-005", name: "李志豪", phone: "0977111222", email: "zhihao@example.com", ticketType: "工作人員", notes: "場控負責人", isCheckedIn: false, checkInTime: "" }
+        ];
+
+        function checkInApp() {
+            return {
+                attendees: [],
+                searchQuery: '',
+                filterStatus: 'all',
+                apiKey: '',
+                tempApiKey: '',
+                isFirebaseConnected: false,
+                settingsModal: false,
+                importExportModal: false,
+                importDataText: '',
+                aiToast: { show: false, message: '' },
+                attendeeModal: { show: false, isEdit: false, form: { id: '', name: '', phone: '', email: '', ticketType: '一般', notes: '' } },
+                confirmModal: { show: false, attendee: null },
+
+                async init() {
+                    // Load saved config
+                    const savedConfig = localStorage.getItem('W_EVENT_SYSTEM_CONFIG');
+                    if (savedConfig) {
+                        try {
+                            const config = JSON.parse(savedConfig);
+                            this.apiKey = config.apiKey || '';
+                        } catch (e) { console.error(e); }
+                    }
+
+                    // Keyboard shortcut "/" or "Ctrl+K"
+                    window.addEventListener('keydown', (e) => {
+                        if ((e.key === '/' && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') ||
+                            ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k')) {
+                            e.preventDefault();
+                            this.$refs.searchInput.focus();
+                        }
+                    });
+
+                    // Initialize Firebase Authentication & Realtime Firestore Listener
+                    this.setupFirebase();
+                },
+
+                async setupFirebase() {
+                    // Wait for window.FB module initialization
+                    const checkFBInterval = setInterval(async () => {
+                        if (window.FB) {
+                            clearInterval(checkFBInterval);
+                            const { auth, db, collection, doc, setDoc, onSnapshot, signInAnonymously, signInWithCustomToken } = window.FB;
+
+                            try {
+                                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                                    await signInWithCustomToken(auth, __initial_auth_token);
+                                } else {
+                                    await signInAnonymously(auth);
+                                }
+                            } catch (e) {
+                                console.warn("Firebase auth fallback to anonymous:", e);
+                                try { await signInAnonymously(auth); } catch (err) { console.error(err); }
+                            }
+
+                            const appId = typeof __app_id !== 'undefined' ? __app_id : 'w-event-app';
+                            const attendeesCol = collection(db, 'artifacts', appId, 'public', 'data', 'attendees');
+
+                            // Realtime Firestore listener
+                            onSnapshot(attendeesCol, (snapshot) => {
+                                this.isFirebaseConnected = true;
+                                if (snapshot.empty) {
+                                    // Seed initial default data to Firestore if empty
+                                    DEFAULT_ATTENDEES.forEach(async (item) => {
+                                        await setDoc(doc(attendeesCol, item.id), item);
+                                    });
+                                } else {
+                                    const items = [];
+                                    snapshot.forEach(docSnap => items.push(docSnap.data()));
+                                    this.attendees = items;
+                                }
+                            }, (err) => {
+                                console.error("Firestore sync error:", err);
+                                this.isFirebaseConnected = false;
+                            });
+                        }
+                    }, 50);
+                },
+
+                get checkedInCount() {
+                    return this.attendees.filter(a => a.isCheckedIn).length;
+                },
+
+                get uncheckedCount() {
+                    return this.attendees.length - this.checkedInCount;
+                },
+
+                get checkInRate() {
+                    if (this.attendees.length === 0) return 0;
+                    return Math.round((this.checkedInCount / this.attendees.length) * 100);
+                },
+
+                get filteredAttendees() {
+                    return this.attendees.filter(a => {
+                        const matchesQuery = !this.searchQuery || 
+                            a.name.toLowerCase().includes(this.searchQuery.toLowerCase()) ||
+                            a.phone.includes(this.searchQuery) ||
+                            (a.email && a.email.toLowerCase().includes(this.searchQuery.toLowerCase())) ||
+                            a.id.toLowerCase().includes(this.searchQuery.toLowerCase());
+                        
+                        if (this.filterStatus === 'checked') return matchesQuery && a.isCheckedIn;
+                        if (this.filterStatus === 'unchecked') return matchesQuery && !a.isCheckedIn;
+                        return matchesQuery;
+                    });
+                },
+
+                getPhoneLast3(phone) {
+                    if (!phone || phone.length < 3) return '---';
+                    return phone.slice(-3);
+                },
+
+                async toggleCheckIn(attendee) {
+                    if (attendee.isCheckedIn) {
+                        this.confirmModal.attendee = attendee;
+                        this.confirmModal.show = true;
+                    } else {
+                        const now = new Date();
+                        const checkInTime = now.toTimeString().split(' ')[0];
+                        
+                        if (window.FB && window.FB.db) {
+                            const { db, doc, updateDoc } = window.FB;
+                            const appId = typeof __app_id !== 'undefined' ? __app_id : 'w-event-app';
+                            const attendeeRef = doc(db, 'artifacts', appId, 'public', 'data', 'attendees', attendee.id);
+                            await updateDoc(attendeeRef, {
+                                isCheckedIn: true,
+                                checkInTime: checkInTime
+                            });
+                        } else {
+                            attendee.isCheckedIn = true;
+                            attendee.checkInTime = checkInTime;
+                        }
+                        this.triggerAIGreeting(attendee);
+                    }
+                },
+
+                async executeUncheck() {
+                    if (this.confirmModal.attendee) {
+                        const attendee = this.confirmModal.attendee;
+                        if (window.FB && window.FB.db) {
+                            const { db, doc, updateDoc } = window.FB;
+                            const appId = typeof __app_id !== 'undefined' ? __app_id : 'w-event-app';
+                            const attendeeRef = doc(db, 'artifacts', appId, 'public', 'data', 'attendees', attendee.id);
+                            await updateDoc(attendeeRef, {
+                                isCheckedIn: false,
+                                checkInTime: ''
+                            });
+                        } else {
+                            attendee.isCheckedIn = false;
+                            attendee.checkInTime = '';
+                        }
+                    }
+                    this.confirmModal.show = false;
+                    this.confirmModal.attendee = null;
+                },
+
+                async triggerAIGreeting(attendee) {
+                    const defaultMsg = `歡迎 ${attendee.name} ${attendee.ticketType} 蒞臨參與！`;
+                    if (!this.apiKey) {
+                        this.showToast(defaultMsg);
+                        return;
+                    }
+
+                    this.showToast(`正在為 ${attendee.name} 生成智慧歡迎詞...`);
+
+                    try {
+                        const prompt = `請為參加活動的學員生成一句簡短且熱情的迎賓祝賀詞。學員姓名：${attendee.name}，票券類別：${attendee.ticketType}，備註：${attendee.notes || '無'}。限制：25字以內，語氣尊榮親切。`;
+                        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${this.apiKey}`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                contents: [{ parts: [{ text: prompt }] }]
+                            })
+                        });
+                        const data = await res.json();
+                        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || defaultMsg;
+                        this.showToast(text);
+                    } catch (err) {
+                        console.error("Gemini API Error:", err);
+                        this.showToast(defaultMsg);
+                    }
+                },
+
+                showToast(msg) {
+                    this.aiToast.message = msg;
+                    this.aiToast.show = true;
+                    setTimeout(() => {
+                        this.aiToast.show = false;
+                    }, 5000);
+                },
+
+                openSettings() {
+                    this.tempApiKey = this.apiKey;
+                    this.settingsModal = true;
+                },
+
+                saveSettings() {
+                    this.apiKey = this.tempApiKey;
+                    localStorage.setItem('W_EVENT_SYSTEM_CONFIG', JSON.stringify({ apiKey: this.apiKey }));
+                    this.settingsModal = false;
+                },
+
+                openImportExport() {
+                    this.importDataText = JSON.stringify(this.attendees, null, 2);
+                    this.importExportModal = true;
+                },
+
+                async importData() {
+                    try {
+                        const parsed = JSON.parse(this.importDataText);
+                        if (Array.isArray(parsed)) {
+                            if (window.FB && window.FB.db) {
+                                const { db, collection, doc, setDoc } = window.FB;
+                                const appId = typeof __app_id !== 'undefined' ? __app_id : 'w-event-app';
+                                const attendeesCol = collection(db, 'artifacts', appId, 'public', 'data', 'attendees');
+                                for (const item of parsed) {
+                                    if (!item.id) item.id = 'ATT-' + Math.floor(1000 + Math.random() * 9000);
+                                    await setDoc(doc(attendeesCol, item.id), item);
+                                }
+                            } else {
+                                this.attendees = parsed;
+                            }
+                            this.importExportModal = false;
+                        } else {
+                            this.showToast("格式錯誤：必須為 JSON 陣列。");
+                        }
+                    } catch (e) {
+                        this.showToast("JSON 解析失敗，請檢查格式。");
+                    }
+                },
+
+                exportData() {
+                    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(this.attendees, null, 2));
+                    const downloadAnchor = document.createElement('a');
+                    downloadAnchor.setAttribute("href", dataStr);
+                    downloadAnchor.setAttribute("download", `event_attendees_${new Date().toISOString().slice(0,10)}.json`);
+                    document.body.appendChild(downloadAnchor);
+                    downloadAnchor.click();
+                    downloadAnchor.remove();
+                },
+
+                async resetToDefaultData() {
+                    if (window.FB && window.FB.db) {
+                        const { db, collection, doc, setDoc } = window.FB;
+                        const appId = typeof __app_id !== 'undefined' ? __app_id : 'w-event-app';
+                        const attendeesCol = collection(db, 'artifacts', appId, 'public', 'data', 'attendees');
+                        for (const item of DEFAULT_ATTENDEES) {
+                            await setDoc(doc(attendeesCol, item.id), item);
+                        }
+                    } else {
+                        this.attendees = DEFAULT_ATTENDEES;
+                    }
+                    this.importExportModal = false;
+                },
+
+                openAddModal() {
+                    this.attendeeModal.isEdit = false;
+                    this.attendeeModal.form = { id: 'ATT-' + Math.floor(100 + Math.random() * 900), name: '', phone: '', email: '', ticketType: '一般', notes: '', isCheckedIn: false, checkInTime: '' };
+                    this.attendeeModal.show = true;
+                },
+
+                openAddModalWithQuery() {
+                    this.attendeeModal.isEdit = false;
+                    this.attendeeModal.form = { id: 'ATT-' + Math.floor(100 + Math.random() * 900), name: this.searchQuery, phone: '', email: '', ticketType: '一般', notes: '', isCheckedIn: false, checkInTime: '' };
+                    this.attendeeModal.show = true;
+                },
+
+                openEditModal(attendee) {
+                    this.attendeeModal.isEdit = true;
+                    this.attendeeModal.form = { ...attendee };
+                    this.attendeeModal.show = true;
+                },
+
+                async saveAttendee() {
+                    if (!this.attendeeModal.form.name.trim()) {
+                        this.showToast("請輸入學員姓名");
+                        return;
+                    }
+
+                    const item = { ...this.attendeeModal.form };
+
+                    if (window.FB && window.FB.db) {
+                        const { db, doc, setDoc } = window.FB;
+                        const appId = typeof __app_id !== 'undefined' ? __app_id : 'w-event-app';
+                        const attendeeRef = doc(db, 'artifacts', appId, 'public', 'data', 'attendees', item.id);
+                        await setDoc(attendeeRef, item, { merge: true });
+                    } else {
+                        if (this.attendeeModal.isEdit) {
+                            const index = this.attendees.findIndex(a => a.id === item.id);
+                            if (index !== -1) this.attendees[index] = item;
+                        } else {
+                            this.attendees.unshift(item);
+                        }
+                    }
+
+                    this.attendeeModal.show = false;
+                }
+            }
+        }
+    </script>
+</body>
+</html>
